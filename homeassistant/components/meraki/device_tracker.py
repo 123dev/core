@@ -12,6 +12,7 @@ import homeassistant.helpers.config_validation as cv
 
 CONF_VALIDATOR = "validator"
 CONF_SECRET = "secret"
+CONF_CAPTURE_ALL = "capture_all"
 URL = "/api/meraki"
 VERSION = "2.0"
 
@@ -20,7 +21,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
-    {vol.Required(CONF_VALIDATOR): cv.string, vol.Required(CONF_SECRET): cv.string}
+    {vol.Required(CONF_VALIDATOR): cv.string, vol.Required(CONF_SECRET): cv.string, vol.Optional(CONF_CAPTURE_ALL, default=False): cv.boolean}
 )
 
 
@@ -42,6 +43,7 @@ class MerakiView(HomeAssistantView):
         self.async_see = async_see
         self.validator = config[CONF_VALIDATOR]
         self.secret = config[CONF_SECRET]
+        self.capture_all = config[CONF_CAPTURE_ALL]
 
     async def get(self, request):
         """Meraki message received as GET."""
@@ -77,9 +79,16 @@ class MerakiView(HomeAssistantView):
     def _handle(self, hass, data):
         for i in data["data"]["observations"]:
             data["data"]["secret"] = "hidden"
+            capture = False
 
-            lat = i["location"]["lat"]
-            lng = i["location"]["lng"]
+            try:
+                lat = i["location"]["lat"]
+            except ValueError:
+                lat = 0
+            try:
+                lng = i["location"]["lng"]
+            except ValueError:
+                lng = 0
             try:
                 accuracy = int(float(i["location"]["unc"]))
             except ValueError:
@@ -102,18 +111,24 @@ class MerakiView(HomeAssistantView):
                 attrs["manufacturer"] = i["manufacturer"]
             if i.get("ipv4", False):
                 attrs["ipv4"] = i["ipv4"]
+                if i["ipv4"] != "null":
+                    capture = True
             if i.get("ipv6", False):
                 attrs["ipv6"] = i["ipv6"]
             if i.get("seenTime", False):
                 attrs["seenTime"] = i["seenTime"]
             if i.get("ssid", False):
                 attrs["ssid"] = i["ssid"]
-            hass.async_create_task(
-                self.async_see(
-                    gps=gps_location,
-                    mac=mac,
-                    source_type=SOURCE_TYPE_ROUTER,
-                    gps_accuracy=accuracy,
-                    attributes=attrs,
+                if i["ssid"] != "null":
+                    capture = True
+
+            if capture or self.capture_all:
+                hass.async_create_task(
+                    self.async_see(
+                        gps=gps_location,
+                        mac=mac,
+                        source_type=SOURCE_TYPE_ROUTER,
+                        gps_accuracy=accuracy,
+                        attributes=attrs,
+                    )
                 )
-            )
